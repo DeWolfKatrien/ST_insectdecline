@@ -1,0 +1,1447 @@
+---
+title: "R analysis"
+author: "Katrien De Wolf"
+output: 
+  html_document:
+      code_folding: hide
+      code_download: true
+      keep_md: yes
+---      
+#Through spider eyes: urbanization imposes declines in insect biomass through the loss of large-bodied prey
+De Wolf Katrien, Verstraelen Nele, Rommel Henri, Vantieghem Pieter, Vanthournout Bram, Bonte Dries.
+
+R-code for analysis
+Version: 5 December 2024
+corresponding author: katrien.dewolf@ugent.be or dewolf_katrien@hotmail.com ; orcid id: https://orcid.org/0000-0002-9255-913X
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warnings=FALSE)
+require(here)
+require(tidyverse)
+require(chron)
+require(corrplot)
+require(ggpubr)
+require(DHARMa) 
+require(glmmTMB) 
+require(car)
+require(emmeans)
+require(MuMIn)
+require(vegan)
+require(ggordiplots)
+require(pairwiseAdonis)
+require(tibble)
+```
+
+load the dataset:  data_sticky_traps.csv
+
+location: sampling location
+start_date: start date of sampling period (will be set as a date character below)
+end_date: end date of sampling period (will be set as a date character below)
+day: numerical value of start date (the day in the year, starting from the first of January 2021) 
+plotid: unique landscape identifier. In total 27 landscapes are monitored P01 until P27
+municipality: Belgian municipality of the 27 landscapes are given. Exact sampling coordinates are not given as sampling took place in private gardens.
+U_landscape: urbanization level at landscape scale (3 km x 3 km , plots): categorical variable with 3 levels: LOW - MEDIUM - HIGH
+U_local: urbanization level at local scale (200 m x 200 m, sampling locations nested within the plots/landscapes): categorical variable with 3 levels: LOW - MEDIUM - HIGH 
+urb_cat: urbanization category indicating both urbanization level at landscape and local scale: categorical variable with 9 levels: LOWLOW - LOWMEDIUM - LOWHIGH - MEDIUMLOW - MEDIUMMEDIUM - MEDIUMHIGH - HIGHLOW - HIGHMEDIUM - HIGHHIGH 
+phylum: taxonomic identification at phylum level. All specimens are Arthropoda.
+class: taxonomic identification at class level
+order: taxonomic identification at order level
+suborder: taxonomic identification at suborder level. When indicated with 'ord', identification at suborder level was not possible, however order level taxonomic identification was successful.
+length: Body length (the longest distance from the top of the head to the end of the abdomen) in mm (precision 0.1 mm)
+width: body width (at the widest point of the body) in mm (precision 0.1 mm)
+area: surface area of each specimen: calculated by multiplying body length and width (mm²)
+biomass_indiv: biomass in mg: calculated by estimating dry mass based on the length-mass relationships for the most dominant arthropod order found in our sampled studies sites, namely Diptera (Sabo et al., 2002). Following formula was used: dry mass (mg) = 0.04 × body length (mm)^2.26.
+n_indiv: number of individuals is for every row 1, because each row in the dataset is another measured specimen of the sticky trap. The column is used to calculate totals and averages.
+sizeclass: categorical variable indicating the size class of each specimen: a different size class was assigned every 0.5 mm unit of body length. 
+ord_sub: combination of order level and suborder level taxonomic identification
+func_species: Functional species groups were created based on the combination of the taxonomic identification level and the size class
+
+```{r data}
+here()
+data.st <- read_csv2("data_sticky_traps.csv", na="")
+names(data.st)
+dim(data.st)
+#README--metadata
+#-----------------------------------------------------------------------------------------------------------------------------
+#location: sampling location
+#start_date: start date of sampling period (will be set as a date character below)
+#end_date: end date of sampling period (will be set as a date character below)
+#day: numerical value of start date (the day in the year, starting from the first of January 2021) 
+#plotid: unique landscape identifier. In total 27 landscapes are monitored P01 until P27
+#municipality: Belgian municipality of the 27 landscapes are given. Exact sampling coordinates are not given as sampling took place in private gardens.
+#U_landscape: urbanization level at landscape scale (3 km x 3 km , plots): categorical variable with 3 levels: LOW - MEDIUM - HIGH
+#U_local: urbanization level at local scale (200 m x 200 m, sampling locations nested within the plots/landscapes): categorical variable with 3 levels: LOW - MEDIUM - HIGH 
+#urb_cat: urbanization category indicating both urbanization level at landscape and local scale: categorical variable with 9 levels: LOWLOW - LOWMEDIUM - LOWHIGH - MEDIUMLOW - MEDIUMMEDIUM - MEDIUMHIGH - HIGHLOW - HIGHMEDIUM - HIGHHIGH 
+#phylum: taxonomic identification at phylum level. All specimens are Arthropoda.
+#class: taxonomic identification at class level
+#order: taxonomic identification at order level
+#suborder: taxonomic identification at suborder level. When indicated with 'ord', identification at suborder level was not possible, however order level taxonomic identification was successful.
+#length: Body length (the longest distance from the top of the head to the end of the abdomen) in mm (precision 0.1 mm)
+#width: body width (at the widest point of the body) in mm (precision 0.1 mm)
+#area: surface area of each specimen: calculated by multiplying body length and width (mm²)
+#biomass_indiv: biomass in mg: calculated by estimating dry mass based on the length-mass relationships for the most dominant arthropod order found in our sampled studies sites, namely Diptera (Sabo et al., 2002). Following formula was used: dry mass (mg) = 0.04 × body length (mm)^2.26.
+#n_indiv: number of individuals is for every row 1, because each row in the dataset is another measured specimen of the sticky trap. The column is used to calculate totals and averages.
+#sizeclass: categorical variable indicating the size class of each specimen: a different size class was assigned every 0.5 mm unit of body length. 
+#ord_sub: combination of order level and suborder level taxonomic identification
+#func_species: Functional species groups were created based on the combination of the taxonomic identification level and the size class
+```
+
+prepare dataset 
+```{r prep}
+#convert categorical columns to factor
+data.st$start_date <- as.Date(data.st$start_date, format="%d/%m/%Y")
+data.st$end_date <- as.Date(data.st$end_date, format="%d/%m/%Y")
+data.st$plotid <- as.factor(data.st$plotid)
+levels(data.st$plotid)  # 27 landscapes # order is ok 
+data.st$municipality <- as.factor(data.st$municipality)
+data.st$U_landscape <- as.factor(data.st$U_landscape)
+data.st$U_local <- as.factor(data.st$U_local)
+data.st$urb_cat <- as.factor(data.st$urb_cat)
+data.st$phylum <- factor(data.st$phylum)
+data.st$class <- factor(data.st$class)
+data.st$order <- factor(data.st$order)
+data.st$suborder <- factor(data.st$suborder)
+data.st$sizeclass <- as.factor(data.st$sizeclass)
+data.st$ord_sub <- as.factor(data.st$ord_sub)
+
+#logical order of the urbanization levels / categories and sampling locations
+data.st$U_landscape<- factor(data.st$U_landscape, levels=c("LOW", "MEDIUM", "HIGH")) # logical order of the urbanization levels at landscape scale from low to high  
+data.st$U_local<- factor(data.st$U_local, levels=c("LOW", "MEDIUM", "HIGH")) # logical order of the urbanization levels at local scale
+data.st$location <- factor(data.st$location)
+data.st$location <- factor(data.st$location,c("P01SG", "P01SY", "P01SR", "P02SG", "P02SY", "P02SR", "P03SG", "P03SY", "P03SR", "P04SG", "P04SY", "P04SR", "P05SG", "P05SY", "P05SR", "P06SG", "P06SY", "P06SR", "P07SG", "P07SY", "P07SR", "P08SG", "P08SY", "P08SR", "P09SG", "P09SY", "P09SR", "P10SG", "P10SY", "P10SR", "P11SG", "P11SY", "P11SR", "P12SG", "P12SY", "P12SR", "P13SG", "P13SY", "P13SR", "P14SG", "P14SY", "P14SR", "P15SG", "P15SY", "P15SR", "P16SG", "P16SY", "P16SR", "P17SG", "P17SY", "P17SR", "P18SG", "P18SY", "P18SR", "P19SG", "P19SY", "P19SR", "P20SG", "P20SY", "P20SR", "P21SG", "P21SY", "P21SR", "P22SG", "P22SY", "P22SR", "P23SG", "P23SY", "P23SR", "P24SG", "P24SY", "P24SR", "P25SG", "P25SY", "P25SR", "P26SG", "P26SY", "P26SR", "P27SG", "P27SY", "P27SR"))
+length(levels(data.st$location)) ## all 81 locations were successfully sampled
+data.st$urb_cat <- factor(data.st$urb_cat, levels=c("LOWLOW", "LOWMEDIUM", "LOWHIGH", "MEDIUMLOW", "MEDIUMMEDIUM", "MEDIUMHIGH", "HIGHLOW", "HIGHMEDIUM", "HIGHHIGH"))
+
+glimpse(data.st)
+
+#colour palettes for figures 
+urb.col3<- c("#38A800", "#E6E600", "#8B008B") # colour palette for the three urbanization levels: LOW - MEDIUM - HIGH 
+col_vec <- c(rep("#8B008B", 3), rep("#E6E600", 3), rep("#38A800", 3))
+plotid.col27 <- rep(col_vec, 3) # for colouring the facets 
+urb.col9 <-c("#38A800", "lightgreen", "darkolivegreen3" , "yellow", "#E6E600", "goldenrod1", "deeppink3", "purple", "#8c008c") #colour palette for the 9 urbanization categories
+```
+
+
+#DATA EXPLORATION AND SUMMARY TABLES
+We collected and measured a total of 9605 arthropods (average ± SD: 119 ± 79; with min-max per trap: 15-487), mainly belonging to the orders Diptera, Hemiptera and Hymenoptera (respectively 55%, 26% and 11% of all individuals
+```{r exploration}
+sum(data.st$n_indiv) # 9605 arthropods 
+
+data.st.tot <- data.st %>%
+  group_by(plotid, U_landscape, U_local, location) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T))
+# min - max on trap
+data.st.tot[which.max(data.st.tot$abundance),]
+data.st.tot[which.min(data.st.tot$abundance),]
+
+## average length of arthropods on sticky trap
+avg1 <- data.st %>%
+  group_by(plotid, location, U_landscape, U_local) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T),
+            avg_length=mean(length,na.rm=T),
+            sd_avg_length=sd(length, na.rm=T))
+
+unique(data.st$order)
+unique(data.st$suborder) #"ord"  When indicated with 'ord', identification at suborder level was not possible, however order level taxonomic identification was successful. This suborder level was used for creating the functional species column (=> combination of size class + taxonomic combination of order and suborder level)
+
+totals_order <- data.st %>% group_by(order) %>% summarise(total=sum(n_indiv, na.rm=T))
+n_tot<-sum(totals_order$total)
+totals_order %>% mutate(percentage=(total/n_tot)*100) %>% arrange(desc(percentage)) #top 3 orders are Diptera, Hemiptera and Hymenoptera
+top3 <- c("DIPTERA", "HEMIPTERA", "HYMENOPTERA")
+```
+
+order - suborder
+##supplementary table S1
+```{r order_suborder}
+## same overview but also including suborder
+table_S1<- data.st %>% 
+  group_by(urb_cat, order, suborder) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T), .groups="drop") %>%
+  pivot_wider(values_from = abundance, names_from=urb_cat, values_fill = 0) %>%
+  mutate(total=rowSums(across(-c(order, suborder)))) %>% arrange(desc(total)) %>%
+  bind_rows(summarise_all(., ~if(is.numeric(.)) sum(.) else "total"))
+table_S1
+write_csv(table_S1, "supplementary_table_S1.csv")
+
+table_S1 %>% filter(order %in% top3) #for the top 3 abundant orders Diptera, Hemiptera and Hymenoptera
+```
+extra: summary for each sampling locations
+```{r expl_location}
+summ_location <-data.st %>% 
+  group_by(location, order, suborder) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T), .groups="drop") %>%
+  pivot_wider(values_from = abundance, names_from=location, values_fill = 0) %>%
+  mutate(total=rowSums(across(-c(order, suborder)))) %>% arrange(desc(total)) %>%
+  bind_rows(summarise_all(., ~if(is.numeric(.)) sum(.) else "total"))
+summ_location
+write_csv(summ_location, "table_per_location.csv")
+```
+extra: summary per order
+```{r expl_order}
+summ_ord <- data.st %>% 
+  group_by(urb_cat, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T), .groups="drop") %>%
+  pivot_wider(values_from=abundance, names_from=urb_cat, values_fill=0)%>%
+  mutate(total=rowSums(across(-order))) %>% arrange(desc(total)) %>%
+  bind_rows(summarise_all(., ~if(is.numeric(.)) sum(.) else "total")) 
+summ_ord
+write_csv(summ_ord, "table_order.csv")
+```
+
+
+
+
+## arthropod abundance
+**exploratory graph1: arthropod abundance for each sampling location**
+```{r abund-graph1, fig.dim=c(15,30)}
+data.st.tot <- data.st %>%
+  group_by(plotid, U_landscape, U_local, location) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T))
+
+graph1 <- ggplot(data.st.tot, aes(x=U_local, y=abundance, fill=U_local)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=urb.col3, guide="none") +
+  facet_grid(~plotid) +
+  labs(x="Urbanization level at local scale", y="Abundance", 
+       title="Arthropod abundance for each sampling location") +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=rel(0.5)))
+g <- ggplot_gtable(ggplot_build(graph1))  ## colouring the facets is based on the code provided online on the github issues page of tidyverse ggplot2: https://github.com/tidyverse/ggplot2/issues/2096 
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(plotid.col27, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p1 <- ggarrange(g)
+p1
+
+#ggsave("graph1.pdf", plot=p1, height=15, width=30, units="cm")
+```
+
+**exploratory graph2: arthropod abundance along the urbanization gradient**
+```{r abund-graph2, , fig.dim=c(10,15)}
+graph2 <- ggplot(data.st.tot, aes(U_landscape, abundance, fill=U_local)) +
+  geom_boxplot(position=position_dodge(width=0.75)) + 
+  scale_fill_manual(values=urb.col3, name="Urbanization level \nat local scale") +
+  labs(y="Arthropod abundance", x="Urbanization level at landscape scale") +
+  theme_bw()
+graph2
+
+#ggsave("graph2.pdf", plot=graph2, height=10, width=15, units="cm")
+```
+
+
+## order
+**exploratory graph3: Relative abundance of the arthropod orders for each sampling location**:
+```{r abund-graph3, fig.dim=c(15,30)}
+#16 orders
+col_ord <- c ("gray0", "grey40", "grey80", "dodgerblue4", "dodgerblue", "skyblue", "darkorchid4", "orchid", "lightpink", "firebrick1", "darkred", "darkgreen", "darkolivegreen4",  "darkolivegreen1", "goldenrod1", "lightgoldenrod2")
+
+rel_n <- data.st %>%
+  group_by(plotid, U_landscape, U_local, location, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup() %>%
+  group_by(plotid, U_landscape, U_local, location) %>%
+  mutate(n_indiv_loc=sum(abundance, na.rm=T),
+         rel_n_indiv=abundance/n_indiv_loc ) %>%
+  ungroup()
+
+### reorder the factors so it is plotted from highest number of specimens to the lowest 
+rel_n$order <- reorder(rel_n$order, rel_n$rel_n_indiv)
+rel_n$order <- factor(rel_n$order, levels=rev(levels(rel_n$order)))
+data.st$order <- factor(data.st$order, levels=levels(rel_n$order))
+
+graph3 <- ggplot(rel_n, aes(x=U_local, y=rel_n_indiv, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~plotid) +
+  labs(x="Urbanization level at local scale", y="Relative abundance", 
+       title="Relative abundance of the arthropod orders for each sampling location") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=rel(0.5)))
+g <- ggplot_gtable(ggplot_build(graph3))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(plotid.col27, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p3 <- ggarrange(g)
+p3
+
+#ggsave("graph3.pdf", plot=p3, height=15, width=30, units="cm") 
+```
+
+**graph4: Abundance of the arthropod orders for each sampling location**:
+```{r abund-graph4-, fig.dim=c(15,30)}
+ord_n <- data.st %>%
+  group_by(plotid, U_landscape, U_local, location, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup()
+
+graph4 <- ggplot(ord_n, aes(x=U_local, y=abundance, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~plotid) +
+  labs(x="Urbanization level at local scale", y="Abundance", 
+       title="Abundance of the arthropod orders for each sampling location") +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=rel(0.5)))
+g <- ggplot_gtable(ggplot_build(graph4))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(plotid.col27, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p4 <- ggarrange(g)
+p4
+
+# ggsave("graph4.pdf", plot=p4, height=15, width=30, units="cm")
+```
+
+**graph5: the relative abundance of the arthropod orders across different urbanization levels at landscape and local scale**:
+**Figure S2 in article**
+```{r abund-graph5, fig.dim=c(15,15)}
+rel_n_urb <- data.st %>%
+  group_by(U_landscape, U_local, urb_cat, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup() %>%
+  group_by(U_landscape, U_local, urb_cat) %>%
+  mutate(n_indiv_urb=sum(abundance, na.rm=T),
+         rel_n_indiv=abundance/n_indiv_urb ) %>%
+  ungroup()
+
+graph5 <- ggplot(rel_n_urb, aes(x=U_local, y=rel_n_indiv, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~U_landscape) +
+  scale_y_continuous(labels=scales::percent_format()) +
+  labs(x="Urbanization level at local scale", y="Relative abundance")+
+  #ggtitle("Relative abundance of the arthropod orders sampled along the urbanization gradient") +
+  theme_bw() +
+  theme(axis.text.x=element_text(size=rel(0.7)), plot.title=element_text(size=rel(0.9)) )
+g <- ggplot_gtable(ggplot_build(graph5))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(urb.col3, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p5 <- ggarrange(g)
+p5
+
+ggsave("Figure_S2.pdf", plot=p5, height=15, width=15, units="cm") ## this is Figure S2 in the article
+#ggsave("Figure_S2.png", plot=p5, height=15, width=15, units="cm")
+#ggsave("Figure_S2.tiff", plot=p5, height=15, width=15, units="cm")
+```
+
+**graph6: the abundance of the arthropod orders across different urbanization levels at landscape and local scale**:
+```{r abund-graph6, fig.dim=c(15,15)}
+n_urb <- data.st %>%
+  group_by(U_landscape, U_local, urb_cat, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup()
+  
+graph6 <- ggplot(n_urb, aes(x=U_local, y=abundance, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~U_landscape) +
+  labs(x="Urbanization level at local scale", y="Abundance",
+       title="Abundance of the arthropod orders sampled along the urbanization gradient") +
+  theme_bw() +
+  theme(axis.text.x=element_text(size=rel(0.7)), plot.title=element_text(size=rel(0.9)))
+g <- ggplot_gtable(ggplot_build(graph6))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(urb.col3, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p6 <- ggarrange(g)
+p6
+
+#ggsave("graph6.pdf",plot=p6, height=15, width=15, units="cm")
+```
+
+#### top 3 orders : DIPTERA + HEMIPTERA + HYMENOPTERA  
+**graph7: Relative abundance of the top 3 arthropod orders for each sampling location**:
+```{r abund-graph7, fig.dim=c(15,30)}
+top3_rel_n <- data.st %>% filter(order %in% top3) %>%
+  group_by(plotid, U_landscape, U_local, location, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup() %>%
+  group_by(plotid, U_landscape, U_local, location) %>%
+  mutate(n_indiv_loc=sum(abundance, na.rm=T),
+         rel_n_indiv=abundance/n_indiv_loc ) %>%
+  ungroup()
+
+graph7 <- ggplot(top3_rel_n, aes(x=U_local, y=rel_n_indiv, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~plotid) +
+  labs(x="Urbanization level at local scale", y="Relative abundance",
+       title="Relative abundance of the top 3 arthropod orders for each sampling location") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=rel(0.5)))
+g <- ggplot_gtable(ggplot_build(graph7))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(plotid.col27, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p7 <- ggarrange(g)
+p7
+
+#ggsave("graph7.pdf", plot=p7, height=15, width=30, units="cm")
+```
+
+**graph8: Abundance of the top3 arthropod orders for each sampling location**
+```{r abund-graph8, fig.dim=c(15,30)}
+top3_ord_n <- data.st %>% filter(order %in% top3) %>%
+  group_by(plotid, U_landscape, U_local, location, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup()
+
+graph8 <- ggplot(top3_ord_n, aes(x=U_local, y=abundance, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~plotid) +
+  labs(x="Urbanization level at local scale", y="Abundance",
+       title="Abundance of the top 3 arthropod orders for each sampling location") + 
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1, size=rel(0.5)))
+g <- ggplot_gtable(ggplot_build(graph8))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(plotid.col27, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p8 <- ggarrange(g)
+p8
+
+#ggsave("graph8.pdf", plot=p8, height=15, width=30, units="cm")
+```
+
+**graph9: the relative abundance of the top 3 arthropod orders across different urbanization levels at landscape and local scale**
+```{r abund-graph9, fig.dim=c(10,15)}
+top3_rel_n_urb<- data.st %>% filter(order %in% top3) %>%
+  group_by(U_landscape, U_local, urb_cat, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup() %>%
+  group_by(U_landscape, U_local, urb_cat) %>%
+  mutate(n_indiv_urb=sum(abundance, na.rm=T),
+         rel_n_indiv=abundance/n_indiv_urb ) %>%
+  ungroup()
+
+graph9 <- ggplot(top3_rel_n_urb, aes(x=U_local, y=rel_n_indiv, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~U_landscape) +
+  labs(x="Urbanization level at local scale", y="Relative abundance")+ 
+  #ggtitle("Relative abundance of the top 3 arthropod orders sampled along the urbanization gradient") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme_bw()+
+  theme(axis.text.x=element_text(size=rel(0.7)))
+g <- ggplot_gtable(ggplot_build(graph9))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(urb.col3, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p9 <- ggarrange(g)
+p9
+
+#ggsave("graph9.pdf", plot=p9, height=10, width=15, units="cm")
+```
+
+**graph10: Abundance of the top 3 Arthropod orders across different urbanization levels at landscape and local scale**
+```{r abund-graph10, fig.dim=c(10,15)}
+top3_n_urb<- data.st %>% filter(order %in% top3) %>%
+  group_by(U_landscape, U_local, urb_cat, order) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup()
+  
+graph10 <- ggplot(top3_n_urb, aes(x=U_local, y=abundance, fill=order)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=col_ord) +
+  facet_grid(~U_landscape) +
+  labs(x="Urbanization level at local scale" , y="Abundance") +
+  #ggtitle("Abundance of the top 3 arthropod orders sampled along the urbanization gradient") +
+  theme_bw() +
+  theme(axis.text.x=element_text(size=rel(0.7)))
+g <- ggplot_gtable(ggplot_build(graph10))
+stript <- which(grepl('strip-t', g$layout$name))
+fills <- scales::alpha(urb.col3, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p10 <- ggarrange(g)
+p10
+
+#ggsave("graph10.pdf", plot=p10, height=10, width=15, units="cm")
+```
+
+
+#### suborder - top3 orders
+exploration of the suborder within the 3 most abundant orders
+**graph11: Abundance per suborder of the top3 insect orders for each sampling location** 
+```{r abund-graph11, fig.dim=c(15,30)}
+### for certain orders the suborder is not known so indicated with 'ord'
+## however for diptera, hemiptera and hymenoptera the data is complete
+top3_sub <- data.st %>% 
+  filter(order %in% top3) %>% 
+  group_by(plotid, U_landscape, U_local, order, suborder) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup()
+
+graph11 <- ggplot(top3_sub, aes(x=U_local, y=abundance, fill=suborder)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_grid(order~plotid) +
+  labs(x="Urbanization level at local scale", y="Abundance") +
+  ggtitle("Abundance per suborder of the top 3 orders for each location") +
+  theme_bw() +
+  theme(legend.position="bottom", axis.text.x=element_text(angle=45,hjust=1, size=rel(0.6)),
+        plot.title=element_text(size=rel(1)))
+g1 <- ggplot_gtable(ggplot_build(graph11))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(plotid.col27, 0.30))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p11 <- ggarrange(g1)
+p11
+#ggsave("graph11.pdf", plot=p11, height=15, width=30, units="cm")
+```
+
+**graph12: the relative abundance per suborder of the top 3 insect orders for each sampling location**:
+```{r abund-graph12, fig.dim=c(15,30)}
+top3_sub_rel <- data.st %>% 
+  filter(order %in% top3) %>% 
+  group_by(plotid, U_landscape, U_local, order, suborder) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup() %>% 
+  group_by(plotid, U_landscape, U_local, order) %>%
+  mutate(n_indiv_loc=sum(abundance, na.rm=T),
+         rel_n_indiv=abundance/n_indiv_loc ) %>%
+  ungroup()
+
+graph12 <- ggplot(top3_sub_rel, aes(x=U_local, y=rel_n_indiv, fill=suborder)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_grid(order~plotid) +
+  labs(x="Urbanization level at local scale" , y="Relative abundance") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  ggtitle("Relative abundance per suborder of the top 3 orders for each sampling location") +
+  theme_bw() +
+  theme(legend.position="bottom", axis.text.x=element_text(angle=45, hjust=1, size=rel(0.7)),
+        plot.title=element_text(size=rel(1)))
+g1 <- ggplot_gtable(ggplot_build(graph12))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(plotid.col27, 0.30))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p12 <- ggarrange(g1)
+p12
+
+#ggsave("graph12.pdf", plot=p12, height=15, width=30, units="cm")
+```
+
+**graph13: Abundance per suborder of the top 3 insect orders across different urbanization levels at landscape and local scale**
+```{r abund-graph13, fig.dim=c(15,15)}
+graph13<- ggplot(top3_sub, aes(x=U_local, y=abundance, fill=suborder)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_grid(order~U_landscape) +
+  labs(x="Urbanization level at local scale", y="Abundance") +
+  #ggtitle("number of specimens per suborder of the top 3 orders for each urbanization level") +
+  theme_bw()+
+  theme(axis.text.x=element_text(size=rel(0.7)))
+g1 <- ggplot_gtable(ggplot_build(graph13))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(urb.col3, 0.30))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p13 <- ggarrange(g1)
+p13
+
+#ggsave("graph13.pdf", plot=p13 , height=15, width=15, units="cm")
+```
+
+**graph14: relative abundance per suborder of the top 3 insect orders for the different urbanization levels at landscape and local scale**:
+```{r abund-graph14, fig.dim=c(15,15)}
+top3_sub_rel_urb <- data.st %>% 
+  filter(order %in% top3) %>% 
+  group_by(U_landscape, U_local, order, suborder) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>%
+  ungroup() %>% 
+  group_by(U_landscape, U_local, order) %>%
+  mutate(n_indiv_loc=sum(abundance, na.rm=T),
+         rel_n_indiv=abundance/n_indiv_loc ) %>%
+  ungroup()
+
+graph14 <- ggplot(top3_sub_rel_urb, aes(x=U_local, y=rel_n_indiv, fill=suborder)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_grid(order~U_landscape) +
+  labs(x="Urbanization level at local scale", y="Relative abundance") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  #ggtitle("Relative abundance per suborder of the 3 orders \nalong the urbanization gradient")+
+  theme_bw() +
+  theme(axis.text.x=element_text(size=rel(0.7)))
+g1 <- ggplot_gtable(ggplot_build(graph14))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(urb.col3, 0.30))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p14 <- ggarrange(g1)
+p14
+
+#ggsave("graph14.pdf", plot=p14 , height=15, width=15, units="cm")
+```
+
+## Functional species - body size distribution 
+combination of arthropod size class with taxonomic identification
+we have size classes (SC) every 0.5 mm of body length.
+SC01 : 0-0.5
+SC02 : 0.5-1
+....
+
+**graph15: the body length (mm) of the collected arthropods**  
+```{r bodysize-graph15, fig.dim=c(15,30)}
+graph15<- ggplot(data.st, aes(x = U_local, y = length, colour=U_local)) +
+  geom_boxplot(position=position_dodge(width=0.8)) +
+  scale_colour_manual(values=urb.col3, name="Urbanization level at local scale")+
+  facet_grid(~plotid)+
+  ylab("Body length (mm)")+
+  theme(legend.position="bottom", axis.title.x=element_blank(),
+        axis.text.x = element_blank(), axis.ticks.x=element_blank(),
+        plot.title = element_text(size=rel(1.1)))
+g1 <- ggplot_gtable(ggplot_build(graph15))
+stript <- which(grepl('strip-t', g1$layout$name))
+fills <-  scales::alpha(plotid.col27, 0.30)
+k <- 1
+for (i in stript) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+p15 <- ggarrange(g1)
+p15
+#ggsave("graph15.pdf", plot=p15 , height=15, width=30, units="cm")
+```
+
+```{r func-sp-expl1}
+data.st$sizeclass <- as.factor(data.st$sizeclass)
+data.st$func_species <- as.factor(data.st$func_species)
+length(levels(data.st$func_species))
+```
+in total 197 functional species 
+
+### exploration functional species top 3 orders: DIPTERA-HYMENOPTERA-HEMIPTERA
+**graphs16-17-18: functional species (the more green - yellow the larger the functional species are)**
+```{r func-sp-expl2, fig.dim=c(15,30)}
+### colours of the suborders used in previous graphs
+sub_dip_col <- c("#31688EFF","#35B779FF")
+sub_hem_col <- c("#443A83FF", "#21908CFF", "#8FD744FF")
+sub_hym_col <- c("#440154FF", "#FDE725FF")
+
+graph16<-data.st %>%
+  filter(order == "DIPTERA") %>%
+  droplevels() %>% 
+  ggplot(aes(x = U_local, y = n_indiv, fill=func_species)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d()+
+  theme(axis.text.x = element_text(angle=45,hjust=1)) +
+  ggtitle("DIPTERA functional species") +
+  facet_grid(suborder~U_landscape)+
+  ylab("Abundance")+
+  xlab("Urbanization level at local scale")
+g1 <- ggplot_gtable(ggplot_build(graph16))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(urb.col3, 0.30), scales::alpha(sub_dip_col, 0.50))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+ggarrange(g1)
+
+graph17<-data.st %>%
+  filter(order == "HEMIPTERA") %>%
+  droplevels() %>% 
+  ggplot(aes(x = U_local, y = n_indiv, fill=func_species)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d()+
+  theme(axis.text.x = element_text(angle=45,hjust=1)) +
+  ggtitle("HEMIPTERA functional species") +
+  facet_grid(suborder~U_landscape)+
+  ylab("Abundance")+
+  xlab("Urbanization level at local scale")
+g1 <- ggplot_gtable(ggplot_build(graph17))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(urb.col3, 0.30), scales::alpha(sub_hem_col, 0.50))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+ggarrange(g1)
+
+graph18<-data.st %>%
+  filter(order == "HYMENOPTERA") %>%
+  droplevels() %>% 
+  ggplot(aes(x = U_local, y = n_indiv, fill=func_species)) +
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d()+
+  theme(axis.text.x = element_text(angle=45,hjust=1)) +
+  ggtitle("HYMENOPTERA functional species") +
+  facet_grid(suborder~U_landscape)+
+  ylab("Abundance")+
+  xlab("Urbanization level at local scale")
+g1 <- ggplot_gtable(ggplot_build(graph18))
+strip <- which(grepl('strip-', g1$layout$name))
+fills <- c(scales::alpha(urb.col3, 0.30), scales::alpha(sub_hym_col, 0.50))
+k <- 1
+for (i in strip) {
+  j <- which(grepl('rect', g1$grobs[[i]]$grobs[[1]]$childrenOrder))
+  g1$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+  k <- k+1
+}
+ggarrange(g1)
+```
+
+
+## STATISTICS-ABUNDANCE
+Generalised linear mixed model: glmmTMB(abundance ~ U_landscape+U_local+(1|plotid), data=df_N, family=nbinom2, REML=T)
+fixed effects: U_landscape and U_local: Urbanization level at landscape and local spatial scale => LOW, MEDIUM, HIGH
+random effect: unique landscape identifier: plotid: P01 - P27
+negative binomial error distribution
+
+```{r STAT-mod-abund}
+df_N <- data.st %>%
+  group_by(location, plotid, U_landscape, U_local, urb_cat, day) %>%
+  summarise(abundance=sum(n_indiv, na.rm=T)) %>% ungroup()
+df <- df_N %>%
+  dplyr::select(abundance, day) %>% ungroup()
+df_cor<-cor(df, method = "pearson")
+corrplot(df_cor,method = "circle", addgrid.col="grey", addCoef.col = "black", number.cex = 0.8, type="upper", title="correlation number of specimens and sampling day", mar=c(0,0,2,0))  #no correlation of arthropod abundance with sampling day
+
+df_N$U_landscape <- as.factor(df_N$U_landscape)
+df_N$U_landscape<- factor(df_N$U_landscape, levels=c("LOW", "MEDIUM", "HIGH"))
+df_N$U_local <- as.factor(df_N$U_local)
+df_N$U_local<- factor(df_N$U_local, levels=c("LOW", "MEDIUM", "HIGH"))
+
+### poisson model has overdispersion correct with nbinom2
+#mod1<-glmmTMB(abundance ~ U_landscape*U_local+(1|plotid), data=df_N, family=poisson) 
+#summary(mod1)
+#Anova(mod1, type="3") 
+#plot(simulateResiduals(mod1))
+#testDispersion(simulateResiduals(mod1))
+
+#mod2<-glmmTMB(abundance ~ U_landscape*U_local+(1|plotid), data=df_N, family=nbinom2)  #nbinom2: to correct for overdispersion
+#summary(mod2) 
+#Anova(mod2, type="3")  #interaction not significant,
+#plot(simulateResiduals(mod2))
+#testDispersion(simulateResiduals(mod2))
+
+
+### statistical model used to test effects of urbanization on arthropod abundance
+mod_abund <- glmmTMB(abundance ~ U_landscape+U_local+(1|plotid), data=df_N, family=nbinom2, REML=T)
+summary(mod_abund) 
+Anova(mod_abund, type="3") # U_local marginally significant
+plot(simulateResiduals(mod_abund))
+simulateResiduals(mod_abund, n=1000, plot=T)
+testDispersion(simulateResiduals(mod_abund))
+contrast(emmeans(mod_abund, specs=~U_local), method="pairwise")
+preds_mod <- emmeans(mod_abund, specs=~U_local, type="response") |> as_tibble()
+```
+
+## BIOMASS 
+calculated biomass as : 
+W = a * length^b : body size length in mm ;  a = 0.04 ; b = 2.26 
+
+biomass was also approximated by the total surface area
+
+**effect of urbanization on arthropod biomass (mg)**
+general linear mixed model: glmmTMB(log(biomass) ~ U_landscape+U_local+(1|plotid), data=df_biomass, family= gaussian, REML=T)
+fixed effects: U_landscape and U_local: Urbanization level at landscape and local spatial scale => LOW, MEDIUM, HIGH
+random effect: unique landscape identifier: plotid: P01 - P27
+gaussian error distribution
+
+```{r STAT-mod-biomass, fig.dim=c(10,10)}
+df_biomass <- data.st %>%
+  group_by(location, plotid, U_landscape, U_local, urb_cat, day) %>%
+  summarise(biomass = sum(biomass_indiv))%>% ungroup()
+
+df <- df_biomass %>%
+  dplyr::select(biomass, day) %>% ungroup()
+df_cor<-cor(df, method = "pearson")
+corrplot(df_cor,method = "circle", addgrid.col="grey", addCoef.col = "black", number.cex = 0.8, type="upper", title="correlation biomass and sampling day", mar=c(0,0,2,0)) #no correlation of biomass with sampling day
+
+#interaction not significant
+#mod_biomass_int<-glmmTMB(log(biomass) ~ U_landscape*U_local+(1|plotid), data=df_biomass, family= gaussian, REML=T)
+#summary(mod_biomass_int)
+#Anova(mod_biomass_int, type="3")  #U_local is significant
+#plot(simulateResiduals(mod_biomass_int))
+
+
+### statistical model used to test the effect of urbanization at landscape and local scale on arthropod biomass
+mod_biomass<-glmmTMB(log(biomass) ~ U_landscape+U_local+(1|plotid), data=df_biomass, family= gaussian, REML=T)
+summary(mod_biomass)
+Anova(mod_biomass, type="3") # U_local and U_landscape significant
+plot(simulateResiduals(mod_biomass))
+contrast(emmeans(mod_biomass, specs=~U_local), method="pairwise") ## local scale
+contrast(emmeans(mod_biomass, specs=~U_landscape), method="pairwise") ## landscape scale
+
+preds_local <- emmeans(mod_biomass, specs=~U_local, type="response") |> as_tibble()
+preds_local
+g1<-ggplot() +
+  geom_pointrange(data=preds_local,
+                  aes(x=U_local, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_local),
+                  position=position_dodge(width=0.5), size=1, pch=21) +
+  scale_fill_manual(values=urb.col3, name="") +
+  labs(x="Urbanization level at local scale", y="Biomass (mg)") +
+  scale_y_continuous(limits=c(20, 90), breaks=seq(20, 90, by=10)) +
+  theme_bw() +
+  theme(legend.position="none", 
+        axis.text = element_text(size=rel(1)), 
+        axis.title = element_text(size=rel(1.1)), 
+        plot.title = element_text(size=rel(1.1)))
+g1
+
+preds_landscape <- emmeans(mod_biomass, specs=~U_landscape, type="response") |> as_tibble()
+preds_landscape
+g2<-ggplot() +
+  geom_pointrange(data=preds_landscape, 
+                  aes(x=U_landscape, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_landscape),
+                  position=position_dodge(width=0.5), size = 1, pch = 21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x="Urbanization level at landscape scale", 
+       y="Biomass (mg)")+
+  scale_y_continuous(limits = c(20, 90), breaks = seq(20, 90, by = 10))+
+  theme_bw()+
+  theme(legend.position="none", 
+        axis.text = element_text(size=rel(1)), 
+        axis.title = element_text(size=rel(1.1)), 
+        plot.title = element_text(size=rel(1.1)))
+g2
+
+## graphs used for Figure 2 in article
+ggsave("biomass_local.pdf",plot=g1, height=10, width=10, units="cm")   
+ggsave("biomass_landscape.pdf",plot=g2, height=10, width=10, units="cm")
+ggsave("biomass_local.png",plot=g1, height=10, width=10, units="cm")
+ggsave("biomass_landscape.png",plot=g2, height=10, width=10, units="cm")
+#ggsave("biomass_local.tiff",plot=g1, height=10, width=10, units="cm")
+#ggsave("biomass_landscape.tiff",plot=g2, height=10, width=10, units="cm")
+
+# extra graphs with raw data plotted as well 
+extra_g1 <- ggplot()+
+  geom_point(data=df_biomass, aes(x=U_local, y=biomass), 
+             colour="#B8C0C7", position=position_jitter(width=0.2), size=1.5)+
+  geom_pointrange(data=preds_local, 
+                  aes(x=U_local, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_local), 
+                  position=position_dodge(width=0.1), size=1, shape=21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x="Urbanization level at local scale", y="Biomass (mg)")+
+  scale_y_continuous(limits=c(0,350), breaks=seq(0, 350, by=50))+
+  theme_bw()+
+  theme(legend.position="none")
+#extra_g1
+extra_g2 <- ggplot()+
+  geom_point(data=df_biomass, aes(x=U_landscape, y=biomass), 
+             colour="#B8C0C7", position=position_jitter(width=0.2), size=1.5)+
+  geom_pointrange(data=preds_landscape, 
+                  aes(x=U_landscape, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_landscape), 
+                  position=position_dodge(width=0.1), size=1, shape=21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x="Urbanization level at landscape scale", y="Biomass (mg)")+
+  scale_y_continuous(limits=c(0, 350), breaks=seq(0, 350, by=50))+ 
+  theme_bw()+
+  theme(legend.position="none")
+#extra_g2
+
+#ggsave("biomass_local_raw.pdf",plot=extra_g1, height=10, width=10, units="cm")
+#ggsave("biomass_landscape_raw.pdf",plot=extra_g2, height=10, width=10, units="cm")
+```
+
+###supplemental: square millimetre surface area
+General linear mixed model:  glmmTMB(log(total_area) ~ U_landscape+U_local+(1|plotid), data=df_area, family=gaussian, REML=T)
+fixed effects: U_landscape and U_local: Urbanization level at landscape and local spatial scale => LOW, MEDIUM, HIGH
+random effect: unique landscape identifier: plotid: P01 - P27
+gaussian error distribution
+
+```{r STAT-mod-area, fig.dim=c(10,10)}
+df_area <- data.st %>%
+  group_by(plotid, U_landscape, U_local, urb_cat, day) %>%
+  summarise(total_area = sum(area))%>% ungroup()
+
+df <- df_area %>%
+  dplyr::select(total_area, day) %>% ungroup()
+df_cor<-cor(df, method = "pearson")
+corrplot(df_cor,method = "circle", addgrid.col="grey", addCoef.col = "black", number.cex = 0.8, type="upper", title="correlation total surface area and sampling day", mar=c(0,0,2,0)) # no correlation with sampling day
+
+### statistical model used to test the effect of urbanization at landscape and local scale on total surface area (proxy for biomass)
+mod_area <- glmmTMB(log(total_area) ~ U_landscape+U_local+(1|plotid), data=df_area, family=gaussian, REML=T)
+summary(mod_area)
+Anova(mod_area, type="3")  #U_local is significant and U_landscape marginally significant (p=0.0713)
+plot(simulateResiduals(mod_area))
+contrast(emmeans(mod_area, specs=~U_local), method="pairwise") ## local scale
+contrast(emmeans(mod_area, specs=~U_landscape), method="pairwise") ## landscape scale   
+preds_local <- emmeans(mod_area, specs=~U_local, type="response") |> as_tibble()
+preds_local
+area_g1 <- ggplot()+
+  geom_point(data=df_area, aes(x=U_local, y=total_area), 
+             colour="#B8C0C7", position=position_jitter(width=0.2), size=1.5)+
+  geom_pointrange(data=preds_local,  
+                  aes(x=U_local, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_local), 
+                  position=position_dodge(width=0.1), size=1, shape=21)+
+  scale_fill_manual(values=urb.col3, name= "")+
+  labs(x="Urbanization level at local scale", 
+       y=bquote('Biomass ('~mm^2~')'))+
+  scale_y_continuous(limits=c(0, 1300), breaks=seq(0, 1300, by=150))+  #when not using the raw data the scale can be set to 150-500
+  theme_bw() +
+  theme(legend.position="none")
+area_g1
+   
+preds_landscape <- emmeans(mod_area, specs=~U_landscape, type="response") |> as_tibble()
+preds_landscape
+area_g2<-ggplot()+
+  geom_point(data=df_area, aes(x=U_landscape, y=total_area), 
+             colour="#B8C0C7", position=position_jitter(width=0.2), size=1.5)+
+  geom_pointrange(data=preds_landscape, 
+                  aes(x=U_landscape, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_landscape), 
+                  position=position_dodge(width = 0.1), size=1, shape=21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x="Urbanization level at landscape scale", y=bquote('Biomass (' ~ mm^2 ~ ')'))+
+  scale_y_continuous(limits=c(0, 1300), breaks=seq(0, 1300, by=150))+  #when not using the raw data than you can put the scale on 150 to 500
+  theme_bw()+
+  theme(legend.position="none")
+area_g2
+
+# used for Figure S3 in article 
+ggsave("biomass_surf_area_local_raw.pdf",plot=area_g1, height=10, width=10, units="cm")
+ggsave("biomass_surf_area_landscape_raw.pdf",plot=area_g2, height=10, width=10, units="cm")
+ggsave("biomass_surf_area_local_raw.png",plot=area_g1, height=10, width=10, units="cm")
+ggsave("biomass_surf_area_landscape_raw.png",plot=area_g2, height=10, width=10, units="cm")
+#ggsave("biomass_surf_area_local_raw.tiff",plot=area_g1, height=10, width=10, units="cm")
+#ggsave("biomass_surf_area_landscape_raw.tiff",plot=area_g2, height=10, width=10, units="cm")
+```
+
+
+## BODY SIZE 
+To test if urbanization decreases average size of the captured arthropods (the potential prey of the spider)
+General linear mixed model : glmmTMB(log(avg_length) ~ U_landscape+U_local+(1|plotid), data=bz, family=gaussian, REML=T)
+fixed effects: U_landscape and U_local: Urbanization level at landscape and local spatial scale => LOW, MEDIUM, HIGH
+random effect: unique landscape identifier: plotid: P01 - P27
+gaussian error distribution
+```{r STAT-bz1, fig.dim=c(25,15)}
+bz <- data.st %>%
+  group_by(plotid, location, start_date, end_date, day, U_landscape, U_local, urb_cat) %>%
+  summarize(abundance=sum(n_indiv, na.rm=T),
+            total_area=sum(area, na.rm=T),
+            avg_length=round(mean(length,na.rm=T), 1),
+            sd_avg_length = round(sd(length, na.rm=T), 1),
+            q25 = round(quantile(length, 0.25, na.rm=T),1),
+            q75 = round(quantile(length, 0.75, na.rm=T),1),
+            median = round(median(length, na.rm=T), 1),
+            IQR = round((quantile(length, 0.75, na.rm=T) - quantile(length, 0.25, na.rm=T)),1))%>% ungroup()
+### if the IQR larger than more spread out
+
+g1_bz <- ggplot(data=bz, aes(x=U_landscape, y=IQR, fill=U_local))+  #IQR => interquartile range a measure of spread, the higher the more spread out the data (= body size length) is 
+  geom_boxplot(position=position_dodge(width=0.8))+
+  scale_fill_manual(values=urb.col3)+
+  theme_bw()+ 
+  theme(legend.position="none")
+g2_bz <- ggplot(data=bz, aes(x=U_landscape, y=q75, fill=U_local))+ # q75 upper quartile
+  geom_boxplot(position=position_dodge(width=0.8))+
+  scale_fill_manual(values=urb.col3)+
+  theme_bw()+
+  theme(legend.position="none")
+g3_bz <- ggplot(data=bz, aes(x=U_landscape, y=q25, fill=U_local))+ # q25 lower quartile
+  geom_boxplot(position=position_dodge(width=0.8))+
+  scale_fill_manual(values=urb.col3)+
+  theme_bw()+
+  theme(legend.position="none")
+g4_bz <- ggplot(data=bz, aes(x=U_landscape, y=median, fill=U_local))+ # median
+  geom_boxplot(position=position_dodge(width=0.8))+
+  scale_fill_manual(values=urb.col3)+
+  theme_bw()+
+  theme(legend.position="none")
+g5_bz<-ggplot(data=bz, aes(x=U_landscape, y=avg_length, fill=U_local))+ # average length
+  geom_boxplot(position=position_dodge(width=0.8))+
+  scale_fill_manual(values=urb.col3)+
+  theme_bw()+
+  theme(legend.position="none")
+p_bz <- ggarrange(g1_bz, g2_bz, g3_bz, "none", g4_bz, g5_bz, nrow=3, ncol=2)
+p_bz
+
+#ggsave("body_size_distrib.pdf", plot=p_bz , height=25, width=15, units="cm")
+
+df <- bz %>%
+  dplyr::select(avg_length, q75, median, q25, IQR, day) %>% ungroup()
+df_cor<-cor(df, method = "pearson")
+corrplot(df_cor,method = "circle", addgrid.col="grey", addCoef.col = "black", number.cex = 0.8, type="upper", title="correlation biomass and sampling period", mar=c(0,0,2,0))
+#no correlation so we do not need to include day in statistical models
+```
+
+```{r stat-bz2, fig.dim=c(10,15)}
+### average size per sticky trap 
+mod_bz <- glmmTMB(log(avg_length) ~ U_landscape+U_local+(1|plotid), data=bz, family=gaussian, REML=T)
+summary(mod_bz)
+Anova(mod_bz, type="3")  #U_local: local scale urbanization level  
+plot(simulateResiduals(mod_bz))
+contrast(emmeans(mod_bz, specs=~U_local), method="pairwise")    
+preds_local <- emmeans(mod_bz, specs=~U_local, type="response") |> as_tibble()
+preds_local
+
+g_bz1 <- ggplot() +
+  geom_point(data=bz, aes(x=U_local, y=avg_length), 
+             colour="#B8C0C7", position=position_jitter(width=0.2), size=1.5) +
+  geom_pointrange(data=preds_local, 
+                  aes(x=U_local, y=response, ymin=lower.CL, ymax=upper.CL, fill=U_local), 
+                  position=position_dodge(width=0.1), size=1, shape=21) +
+  scale_fill_manual(values=urb.col3, name= "") +
+  labs(x="Urbanization level at local scale", y="Average arthropod length (mm)") +
+  theme_bw() +
+  theme(legend.position = "none")
+g_bz1
+
+p_avg_length <- ggplot(data=bz, aes(U_landscape, avg_length, fill=U_local)) +
+   geom_boxplot(position=position_dodge(width=0.8))+
+   scale_fill_manual(values=urb.col3, name="Urbanization level \nat local scale")+
+   labs(x="Urbanization level at landscape scale", y="Average arthropod length (mm)") +
+   theme_bw()+
+   theme(axis.title=element_text(size=rel(1.1)))
+p_avg_length
+
+## supplementary Figure S4
+ggsave("Figure_S4.pdf", plot=p_avg_length, height=10, width=15, units="cm")
+#ggsave("Figure_S4.png", plot=p_avg_length, height=10, width=15, units="cm")
+#ggsave("Figure_S4.tiff", plot=p_avg_length, height=10, width=15, units="cm")
+```
+
+## DIVERSITY 
+### biodiversity indices : Species Richness, Shannon Diversity and Pielou's Evenness
+```{r biodiv-func-species, fig.dim=c(13,18)}
+# create community matrix
+func.matrix <- data.st %>%
+  group_by(location, plotid, U_landscape, U_local, urb_cat, day, func_species) %>%
+  summarise(abundance=sum(n_indiv)) %>%
+  spread(key=func_species, value=abundance, fill=0) %>%
+  subset(select=-c(plotid, U_landscape, U_local, urb_cat, day)) %>%
+  column_to_rownames(var="location")
+ 
+# create dataset info containing the metadata 
+info <- data.st %>% 
+  group_by(location, plotid, U_landscape, U_local, urb_cat, day, func_species) %>%
+  summarise(abundance=sum(n_indiv)) %>%
+  spread(key=func_species, value=abundance, fill=0) %>%
+  dplyr::select(location, plotid, U_landscape, U_local, urb_cat, day)
+
+# calculate via R-package vegan the biodiversity indices: Species Richness, Shannon Diversity and Pielou's Evenness
+species_richness <- specnumber(func.matrix) #species richness    
+species_richness
+shannondiv <- diversity(func.matrix, index=c("shannon")) #Shannon Diversity
+shannondiv
+evenness <- shannondiv/log(species_richness) # Pielou's evenness
+evenness
+
+df_div <- data.frame(species_richness, shannondiv, evenness) # combined dataset of the biodiversity indices
+df_div <- rownames_to_column(df_div, var="location")
+df_div <- left_join(df_div, info, by="location")
+df_div$U_landscape <- factor(df_div$U_landscape, levels = c("LOW", "MEDIUM", "HIGH"))
+df_div$U_local <- factor(df_div$U_local, levels = c("LOW", "MEDIUM", "HIGH"))
+
+d1<-ggplot(df_div, aes(U_landscape, species_richness, fill= U_local)) +
+  geom_boxplot(position=position_dodge(width=0.75))+
+  geom_jitter(position=position_dodge(width=0.75), alpha=0.6, size=1.5, colour="gray3")+ 
+  scale_fill_manual(values = urb.col3, name="Urbanization level at local scale") +
+  ylab("Species Richness")+
+  xlab(" ")+
+  theme_bw()+
+  theme(axis.title.y=element_text(size=rel(1)))
+d1
+
+d2<-ggplot(df_div, aes(U_landscape, shannondiv, fill= U_local)) +
+  geom_boxplot(position=position_dodge(width=0.75))+
+  geom_jitter(position=position_dodge(width=0.75), alpha=0.6, size=1.5, colour="gray3")+ 
+  scale_fill_manual(values = urb.col3, name="Urbanization level at local scale") +
+  ylab("Shannon Diversity")+
+  xlab(" ")+
+  theme_bw()+
+  theme(axis.title.y=element_text(size=rel(1)))
+d2
+
+d3<-ggplot(df_div, aes(U_landscape, evenness, fill= U_local)) +
+  geom_boxplot(position=position_dodge(width=0.75))+
+  geom_jitter(position=position_dodge(width=0.75), alpha=0.6, size=1.5, colour="gray3")+ 
+  scale_fill_manual(values = urb.col3, name="Urbanization level at local scale") +
+  ylab("Evenness")+
+  xlab("Urbanization level at landscape scale")+
+  theme_bw()+
+  theme(axis.title.y=element_text(size=rel(1)))
+d3
+
+fig_d <- ggarrange(d1, d2, d3, common.legend=T, legend="bottom", nrow=3)
+fig_d
+
+## Figure 3 in article
+ggsave("Figure_3.pdf",plot=fig_d, height=13, width=18, units="cm")
+ggsave("figure_3.png",plot=fig_d, height=13, width=18, units="cm")
+ggsave("figure_3.tiff",plot=fig_d, height=13, width=18, units="cm")
+```
+#### STATISTICS -  biodiversity indices
+```{r stat-biodiv}
+df <- df_div %>%
+  dplyr::select(species_richness, shannondiv, evenness, day) %>% ungroup()
+df_cor<-cor(df, method = "pearson")
+corrplot(df_cor,method = "circle", addgrid.col="grey", addCoef.col = "black", number.cex = 0.8, type="upper", title="correlation biodiversity indices and sampling day", mar=c(0,0,2,0))
+## no correlation with sampling day
+
+#species richness => count data => poisson distribution => correct for overdispersion with nbinom2
+mod_spr<-glmmTMB(species_richness ~ U_landscape+U_local+(1|plotid), data=df_div, family=nbinom2, REML=T) 
+summary(mod_spr)
+Anova(mod_spr, type="3")  #U_local is significant
+plot(simulateResiduals(mod_spr))
+testDispersion(simulateResiduals(mod_spr))
+contrast(emmeans(mod_spr, specs=~U_local), method="pairwise") 
+preds_mod_spr <- emmeans(mod_spr, specs=~U_local, type="response") |> as_tibble()
+preds_mod_spr
+g_spr<-ggplot()+
+  geom_point(data=df_div, aes(x=U_local, y=species_richness),
+  position=position_jitter(width = 0.2, height = 0), size=2, col="#B8C0C7")+
+  geom_pointrange(data=preds_mod_spr, 
+                  aes(x=U_local, y=response, ymin=asymp.LCL, ymax=asymp.UCL, fill=U_local), position=position_dodge(width=0.5), size = 1, pch = 21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x=" ", y="Species Richness")+
+  theme_bw()
+g_spr
+
+mod_sha <- glmmTMB(shannondiv ~ U_landscape+U_local+(1|plotid), data=df_div, family=gaussian, REML=T) 
+summary(mod_sha)
+Anova(mod_sha, type="3")  #U_local is significant
+plot(simulateResiduals(mod_sha))
+contrast(emmeans(mod_sha, specs=~U_local), method="pairwise") 
+preds_mod_sha <- emmeans(mod_sha, specs=~U_local, type="response") |> as_tibble()
+preds_mod_sha
+g_sha<-ggplot()+
+  geom_point(data=df_div, aes(x=U_local, y=shannondiv),
+  position=position_jitter(width = 0.2, height = 0), size=2, col="#B8C0C7")+
+  geom_pointrange(data=preds_mod_sha, 
+                  aes(x=U_local, y=emmean, ymin=lower.CL, ymax=upper.CL, fill=U_local), position=position_dodge(width=0.5), size = 1, pch = 21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x=" ", y="Shannon Diversity")+
+  theme_bw()
+g_sha
+
+mod_pie <- glmmTMB(evenness ~ U_landscape+U_local+(1|plotid), data=df_div, family=gaussian, REML=T) 
+summary(mod_pie)
+Anova(mod_pie, type="3")  #U_local is significant
+plot(simulateResiduals(mod_pie))
+contrast(emmeans(mod_pie, specs=~U_local), method="pairwise") 
+preds_mod_pie <- emmeans(mod_pie, specs=~U_local, type="response") |> as_tibble()
+preds_mod_pie
+
+g_pie<-ggplot()+
+  geom_point(data=df_div, aes(x=U_local, y=evenness), 
+             position=position_jitter(width = 0.2, height = 0), size=2, col="#B8C0C7")+
+  geom_pointrange(data=preds_mod_pie, 
+                  aes(x=U_local, y=emmean, ymin=lower.CL, ymax=upper.CL, fill=U_local), position=position_dodge(width=0.5), size = 1, pch = 21)+
+  scale_fill_manual(values=urb.col3, name="")+
+  labs(x="Urbanization level at local scale", y="Evenness")+
+  theme_bw()
+g_pie
+
+fig_stat_div <- ggarrange(g_spr, g_sha, g_pie, common.legend=T, legend="none", nrow=3)
+fig_stat_div  #extra figure showing effect of local scale urbanization
+
+#ggsave("figure_stat_div.pdf",plot=fig_stat_div, height=13, width=18, units="cm")
+```
+
+### Community composition
+focus on functional species of the top 3 genera: Diptera, Hemiptera and Hymenoptera (respectively 55%, 26% and 11% of all individuals)
+#### NMDS: functional species (Diptera, Hemiptera, Hymenoptera) 
+Non-metric multidimensional scaling (NMDS) ordination based on Bray-Curtis dissimilarities of the functional species. Only the functional species of the three most abundant orders (Diptera, Hemiptera, and Hymenoptera) were included. 
+According to the first three NMDS ordination axis and final stress of 0.22. 
+```{r bray-nmds-top3}
+set.seed(4)
+
+##for plotting nmds
+customized_theme <- theme(plot.background=element_rect("white"),
+        panel.background=element_rect("white"),
+        panel.border=element_rect(linetype="solid", "black", fill=NA),
+        panel.grid=element_line("white"),
+        axis.line=element_line("black"),
+        axis.text=element_text(size = 10, colour = "black"),
+        axis.title=element_text(colour = "black"),
+        legend.text=element_text(size = 10),
+        legend.key=element_rect("white"))
+
+# dataset only containing DIPTERA, HEMIPTERA and HYMENOPTERA
+data.st.dhh <- data.st %>%  
+  dplyr::filter(order %in% top3 )  %>%
+  droplevels()
+
+#community matrix functional species 
+dhh.matrix <- data.st.dhh %>%
+  dplyr::group_by(location, plotid, U_landscape, U_local, urb_cat, func_species) %>%
+  dplyr::summarise(abundance=sum(n_indiv)) %>%
+  spread(key=func_species, value=abundance, fill=0) %>%
+  subset(select=-c(plotid, U_landscape, U_local, urb_cat)) %>%
+  column_to_rownames(var="location")
+
+#info
+info <- data.st.dhh %>% 
+  dplyr::group_by(location, plotid, U_landscape, U_local, urb_cat, func_species) %>%
+  dplyr::summarise(abundance=sum(n_indiv)) %>%
+  spread(key=func_species, value=abundance, fill=0) %>%
+  dplyr::select(location, plotid, U_landscape, U_local, urb_cat)
+
+
+#ordination with metaMDS
+ord = metaMDS(dhh.matrix, autotransform=T, distance="bray", trymax=1000, k=3, expand=F, plot=F)
+ord
+stressplot(ord)
+
+#plot ordination with ordiellipse (standard deviation)
+
+gg12 <- gg_ordiplot(ord, groups=info$U_local, kind="sd", choices=c(1,2), plot=F, scaling = 1)
+#envfit to plot species 
+fit12<-gg_envfit(ord, dhh.matrix, choices=c(1,2), perm=9999, alpha=0.001, plot=F, scaling = 1)
+
+x_limits=c(-0.9, 0.9) # via (range(ord$points[,1])) you can determine the dimensions
+### customize the nmds plot
+gg12.plot <- gg12$plot +
+  scale_colour_manual(name="Urbanization level \nat local scale",
+                     values=c("LOW"="#38A800", "MEDIUM"="#E6E600", "HIGH"="#8B008B")) +
+  geom_segment(data=fit12$df_arrows, aes(x=0, xend=x, y=0, yend=y),
+               arrow=arrow(length=unit(0.25, "cm")), col="gray30") +
+  geom_text(data=fit12$df_arrows, aes(x=x, y=y, label=var), size=3, 
+            position=position_nudge(x=-0.1, y=+0.085)) +
+  xlim(x_limits)+
+  customized_theme
+gg12.plot
+
+# repeat for NMDS1 and NMDS3
+gg13 <- gg_ordiplot(ord, groups=info$U_local, kind="sd", choices=c(1,3), plot=F, scaling = 1)
+fit13 <- gg_envfit(ord, dhh.matrix, choices=c(1,3), perm=9999, alpha=0.001, plot=F, scaling = 1)
+
+gg13.plot <- gg13$plot +
+  scale_colour_manual(name="Urbanization level \nat local scale",
+                     values=c("LOW"="#38A800", "MEDIUM"="#E6E600", "HIGH"="#8B008B")) +
+  geom_segment(data=fit13$df_arrows, aes(x=0, xend=x, y=0, yend=y),
+               arrow=arrow(length=unit(0.25, "cm")), col="gray30") +
+  geom_text(data=fit13$df_arrows, aes(x=x, y=y, label=var), size=3,
+            position=position_nudge(x=0.185, y=-0.01)) +
+  xlim(x_limits)+ 
+  customized_theme
+gg13.plot
+
+## Figure 1 in article 
+ggsave("Figure_1_axis1_2.pdf", plot=gg12.plot, height=12, width=15, units="cm")
+ggsave("Figure_1_axis1_2.pdf", plot=gg12.plot, height=12, width=15, units="cm")
+#ggsave("Figure_1_axis1_2.pdf", plot=gg12.plot, height=12, width=15, units="cm")
+ggsave("Figure_1_axis1_3.pdf", plot=gg13.plot, height=12, width=15, units="cm")
+ggsave("Figure_1_axis1_3.png", plot=gg13.plot, height=12, width=15, units="cm")
+#ggsave("Figure_1_axis1_3.tiff", plot=gg13.plot, height=12, width=15, units="cm")
+```
+
+#####supplemental NMDS Figure S1: 
+```{r}
+pdf("Figure_S1_local.pdf")
+
+par(mfrow=c(1,2))
+U_local <- info$U_local
+#plot(ord, type="n", main="subplot level", cex.axis=1)
+#points(ord, col=urb.col3, pch=16)
+colors<-rep(urb.col3, 27)  #pay attention in the tabel 
+#plot convex hulls with colors based on treatment
+
+plot(ord$point[,1], ord$point[,2], type="n", main="local scale", xlab="NMDS1", ylab="NMDS2", cex.axis=1.0)
+points(ord, choices=c(1,2), col=colors, pch=16)
+
+for(i in unique(U_local)) {
+  ordiellipse(ord$point[grep(i, U_local), ], draw="polygon", cex=1.0, groups=U_local[U_local==i], col=colors[grep(i, U_local)], lwd=1, label=F)
+}
+
+plot(ord$points[,1], ord$points[,3], type="n", main="local scale", xlab="NMDS1", ylab="NMDS3", cex.axis=1.0)
+points(ord, choices=c(1,3), col=colors, pch=16)
+
+for(i in unique(U_local)) {
+  ordiellipse(ord$point[grep(i, U_local), ], draw="polygon", cex=1.0, groups=U_local[U_local==i], col=colors[grep(i, U_local)], lwd=1, label=F)
+}
+
+dev.off()
+
+pdf("Figure_S1_landscape.pdf")
+par(mfrow=c(1,2))
+U_landscape<-info$U_landscape
+colors <- c(rep("#8B008B",9), rep("#E6E600",9), rep("#38A800", 9), rep("#8B008B",9), rep("#E6E600",9), rep("#38A800", 9), rep("#8B008B",9), rep("#E6E600",9), rep("#38A800", 9) )
+
+plot(ord$point[,1], ord$point[,2], type="n", main="landscape scale", xlab="NMDS1", ylab="NMDS2", cex.axis=1.0)
+points(ord, choices=c(1,2), col=colors, pch=16)
+
+for(i in unique(U_landscape)) {
+  ordiellipse(ord$point[grep(i, U_landscape), ], draw="polygon", cex=1.0, groups=U_landscape[U_landscape==i], col=colors[grep(i, U_landscape)], lwd=1, label=F)
+}
+
+plot(ord$point[,1], ord$point[,3], type="n", main="landscape scale", xlab="NMDS1", ylab="NMDS3", cex.axis=1.0)
+points(ord, choices=c(1,3), col=colors, pch=16)
+
+for(i in unique(U_landscape)) {
+  ordiellipse(ord$point[grep(i, U_landscape), ], draw="polygon", cex=1.0, groups=U_landscape[U_landscape==i], col=colors[grep(i, U_landscape)], lwd=1, label=F)
+}
+
+dev.off()
+```
+
+##### Permanova and Betadisper
+the effect of urbanization at both local and landscape scales on the functional arthropod  community composition was analysed by Permutational Multivariate Analysis of Variance (PERMANOVA) on the Bray-Curtis dissimilarity matrix.
+permutations where restricted 
+betadisper (vegan package): test for equal variance among groups (local and landscape)
+```{r permanova}
+set.seed(4)
+dhh.dist<-vegdist(dhh.matrix, method="bray") # bray-curtis dissimilarity matrix as input for adonis2
+
+#set permutations via permute to test the effect of both local and landscape scale urbanization 
+perm_plotid <- with(info, how(nperm = 9999, blocks = plotid))
+
+perman1<-adonis2(dhh.dist ~ U_landscape+U_local+U_landscape:U_local, method="bray", data=info,
+                 permutations=perm_plotid)
+perman1
+
+# calculate mean sum of squares (Sumsqs/df)
+perman1$SumOfSqs[1]/perman1$Df[1]
+perman1$SumOfSqs[2]/perman1$Df[2]
+perman1$SumOfSqs[3]/perman1$Df[3]
+perman1$SumOfSqs[4]/perman1$Df[4]
+
+
+bd_local <- betadisper(dhh.dist, info$U_local)  
+bd_local 
+print(permutest(bd_local,pairwise=TRUE,permutations=9999)) # not significant => ok, no dispersion
+
+bd_land <- betadisper(dhh.dist, info$U_landscape) 
+bd_land
+print(permutest(bd_land,pairwise=TRUE,permutations=9999)) # not significant => ok, no dispersion 
+
+#pairwise comparisons of groups 
+#low, medium and high urbanization levels at local or landscape scale
+pairwise.adonis(dhh.dist, info$U_local)
+pairwise.adonis(dhh.dist, info$U_landscape) 
+```
+
+#### NMDS: body size 
+community matrix based on the body size classes (not based on the taxonomy)
+```{r body_size}
+# body size based community matrix
+bz.matrix <- data.st %>%
+  dplyr::group_by(location, plotid, U_landscape, U_local, urb_cat, sizeclass) %>%
+  dplyr::summarise(abundance=sum(n_indiv)) %>%
+  spread(key=sizeclass, value=abundance, fill=0) %>%
+  subset(select=-c(plotid, U_landscape, U_local, urb_cat)) %>%
+  column_to_rownames(var="location")
+ 
+info <- data.st %>% 
+  dplyr::group_by(location, plotid, U_landscape, U_local, urb_cat, sizeclass) %>%
+  dplyr::summarise(abundance=sum(n_indiv)) %>%
+  spread(key=sizeclass, value=abundance, fill=0) %>%
+  dplyr::select(location, plotid, U_landscape, U_local, urb_cat)
+
+set.seed(4)
+bz_ord=metaMDS(bz.matrix, distance="bray", trymax=999, k=3)
+bz_ord
+stressplot(bz_ord)
+
+set.seed(4)
+bz_gg12 <- gg_ordiplot(bz_ord, groups=info$U_local, kind="sd", choices=c(1,2), plot=F)
+bz_fit12<-gg_envfit(bz_ord, bz.matrix, choices=c(1,2), perm=9999, alpha=0.001, plot=F)
+
+bz_x_limits=c(-0.7, 0.9) 
+bz_gg12.plot <- bz_gg12$plot +
+  scale_colour_manual(name="Urbanization level \nat local scale",  
+                     values=c("LOW"="#38A800", "MEDIUM"="#E6E600", "HIGH"="#8B008B")) +
+  geom_segment(data=bz_fit12$df_arrows, aes(x=0, xend=x, y=0, yend=y),
+               arrow=arrow(length=unit(0.25, "cm")), col="gray30") +
+  geom_text(data=bz_fit12$df_arrows, aes(x=x, y=y, label=var), size=3.5, 
+            position=position_nudge(x=-0.055, y=+0.035)) +
+  xlim(bz_x_limits)+
+  customized_theme
+bz_gg12.plot
+
+set.seed(4)
+bz_gg13 <- gg_ordiplot(bz_ord, groups=info$U_local, kind="sd", choices=c(1,3), plot=F)
+bz_fit13<-gg_envfit(bz_ord, bz.matrix, choices=c(1,3), perm=9999, alpha=0.001, plot=F)
+
+bz_gg13.plot <- bz_gg13$plot +
+  scale_colour_manual(name="Urbanization level \nat local scale",  
+                     values=c("LOW"="#38A800", "MEDIUM"="#E6E600", "HIGH"="#8B008B")) +
+  geom_segment(data=bz_fit13$df_arrows, aes(x=0, xend=x, y=0, yend=y),
+               arrow=arrow(length=unit(0.25, "cm")), col="gray30") +
+  geom_text(data=bz_fit13$df_arrows, aes(x=x, y=y, label=var), size=3.5, 
+            position=position_nudge(x=-0.05, y=0.038)) +
+  xlim(bz_x_limits)+
+  customized_theme
+bz_gg13.plot
+
+# Supplemental Figure S5 
+ggsave("Figure_S5_axis1_2.pdf",plot=bz_gg12.plot, height=20, width=20, units="cm")
+ggsave("Figure_S5_axis1_2.png",plot=bz_gg12.plot, height=20, width=20, units="cm")
+#ggsave("Figure_S5_axis1_2.tiff",plot=bz_gg12.plot, height=20, width=20, units="cm")
+#ggsave("Figure_S5_axis1_3.pdf",plot=bz_gg13.plot, height=20, width=20, units="cm")
+#ggsave("Figure_S5_axis1_3.png",plot=bz_gg13.plot, height=20, width=20, units="cm")
+#ggsave("Figure_S5_axis1_3.tiff",plot=bz_gg13.plot, height=20, width=20, units="cm")
+
+
+set.seed(4)
+bz.dist<-vegdist(bz.matrix, method="bray") # bray-curtis dissimilarity matrix as input for adonis2
+#set permutations via permute to test the effect of both local and landscape scale urbanization 
+perm_plotid <- with(info, how(nperm = 9999, blocks = plotid))
+perman_bz<-adonis2(bz.dist ~ U_landscape+U_local+U_landscape:U_local, method="bray", data=info, permutations=perm_plotid)
+perman_bz
+```
+this result clearly indicates that low urbanised local sites have larger insects (high size classes numbers: eg. SC16: body length from 7.5-8; SC18:  8.5 - 9 mm, SC20: 9.5 - 10 mm)
